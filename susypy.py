@@ -463,10 +463,10 @@ def scan_params(base_slha: SLHA,
             raise RuntimeError(f"Cannot set {params[i]}, parameter does not exist.")
         
         for value in param_values[i]:
-            new_name = params[i][0] 
-            + "_" + str(params[i][1]) 
-            + "_" + str(int(float(value))) 
-            + "_" + orig_name
+            new_name = (params[i][0] 
+                + "_" + str(params[i][1]) 
+                + "_" + str(int(float(value))) 
+                + "_" + orig_name)
             new_slha = base_slha.create_copy(new_name, 
                                              new_dir_name=date_string)
 
