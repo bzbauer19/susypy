@@ -6,8 +6,30 @@ import datetime as dt
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 class SLHA:
-    def __init__(self, slha: str, softpoint_dir: str, in_dir: str | None=None, out_dir: str | None=None):
+    """
+    Class for handling SLHA (SUSY Les Houches Accord) format files
+    and running softsusy on the file.
+    """
+    def __init__(self, slha: str, 
+                softpoint_dir: str, 
+                in_dir: str | None = None, 
+                out_dir: str | None = None):
+        
+        """
+        Class initialization for SLHA files.
+
+        Parameters:
+        slha (str): File name for the SLHA file including file extension.
+        softpoint_dir (str): Directory path of SOFTSUSY softpoint.x
+        in_dir (str | None, optional): Directory path for the input SLHA file. Default is None.
+        out_dir (str | None, optional): Directory path for the output SLHA file after softpoint is run. Default is None.
+
+        Returns:
+        No return.
+        """
+
         self.slha_name = slha.split("/")[-1]
         self.softpoint = softpoint_dir
         if in_dir is None:
@@ -33,10 +55,25 @@ class SLHA:
         
         self._parse()
 
-   
-    def gen_output(self, suppress: bool=True) -> SLHA:
+    def gen_output(self, suppress: bool = True) -> SLHA:
+        """
+        Runs the SOFTSUSY softpoint.x program on the SLHA instance.
+        A new SLHA file is generated based on the existing parameters
+        within the SLHA file.
 
-        command = (self.softpoint + " leshouches < " + self.slha + " > " + self.out_dir + "/Output_" + self.slha_name)
+        Parameters:
+        suppress (bool, optional): Option to suppress the subprocess stdout and stderr. Default is True.
+
+        Returns:
+        SLHA: The output SLHA from running softpoint.x. Returns a new SLHA object.
+        """
+
+        command = (self.softpoint 
+                   + " leshouches < " 
+                   + self.slha + " > " 
+                   + self.out_dir 
+                   + "/Output_" 
+                   + self.slha_name)
         process = subprocess.run(command, shell=True, capture_output=True)
 
         if not suppress:
@@ -46,10 +83,15 @@ class SLHA:
         if process.returncode != 0:
             raise RuntimeError("Softsusy failure")
         
-        return SLHA(self.out_dir + "/Output_" + self.slha_name, self.softpoint, in_dir=self.in_dir, out_dir=self.out_dir)
-
+        return SLHA(self.out_dir 
+                    + "/Output_" 
+                    + self.slha_name, 
+                    self.softpoint, 
+                    in_dir=self.in_dir, 
+                    out_dir=self.out_dir)
 
     def _parse(self):
+        # Reads the SLHA file and compiles the blocks and decays into two dictionaries for data reference.
 
         do_block = False
         do_decay = False
@@ -91,8 +133,9 @@ class SLHA:
         self.block_list = self._clean_data(block_list)
         self.decay_list = self._clean_data(decay_list)
 
+    def _clean_data(self, dirty: list) -> dict:
+        # Takes in a 2D list of data from _parse and removes unncessary information and assembles a dictionary with headers as keys.
 
-    def _clean_data(self, dirty: tt.List) -> dict:
         temp_cell = []
         clean = {}
         for cell in dirty:
@@ -114,20 +157,41 @@ class SLHA:
             clean[dict_key] = temp_cell
         return clean
 
+    def to_floats(self, cell: list[str]) -> list[float]:
+        """
+        Converts a set of Block values or Decay values to floats from strings.
+        This function assumes that the input list is 1D and only contains numbers and comments.
 
-    def to_numeric_cell(self, cell: tt.List) -> tt.List:
-        ## ASSUMES INPUT CELL IS NUMERIC WITH COMMENTS
-        numeric_cell = []
+        Parameters:
+        cell (list[str]): 1D list of strings to be converted to floats, comments are allowed.
+
+        Returns:
+        list[float]: 2D list of floats from cell strings, comments are removed.
+        """
+
+        floats = []
         for row in cell:
             print(row[-1] + " " + " ".join(row[:-1])) # Displays comment and associated data
             cast_row = [float(i) for i in row[:-1]]
 
-            numeric_cell.append(cast_row)
+            floats.append(cast_row)
 
-        return numeric_cell
+        return floats
 
+    def set_param(self, param: tuple[str, int], value: str, loc: int = 1):
+        """
+        Overwrites the SLHA file to replace the specified Block parameter with a new value.
 
-    def set_param(self, param: tt.Tuple, value: str, loc: int=1):
+        Parameters:
+        param (tuple[str, int]): (Block name, line number) to be assigned a new value.
+        value (str): String value that will overwrite the specified parameter.
+        loc (int, optional): Optionally select a column in the file. Default is column 1.
+
+        Returns:
+        No returns.
+        *Note that the values in SLHA files are typically numeric and the columns are zero-indexed.*
+        """
+
         search_block = False
         temp_lines = []
 
@@ -150,15 +214,29 @@ class SLHA:
             for line in temp_lines:
                 slha.write(line)
 
+    def create_copy(self, name: str, 
+                    suppress: bool = True, 
+                    new_dir_name: str | None = None) -> SLHA:
+        """
+        Creates a copy of the SLHA file this instance references.
 
-    def create_copy(self, name: str, suppress: bool=True, new_dir_name: str=None) -> SLHA:
+        Parameters:
+        name (str): The new name for the copy being created.
+        suppress (bool, optional): Option to suppress the subprocess stdout and stderr. Default is True.
+        new_dir_name (str | None, optional): New absolute path to a directory for the file to be copied to. Default is None.
+
+        Returns:
+        SLHA: Copy of this SLHA instance. This is a separate SLHA object.
+        """
 
         next_in_dir = self.in_dir
         next_out_dir = self.out_dir
 
         if new_dir_name is not None:
-            if not os.path.exists(self.in_dir + "/" + new_dir_name) : os.makedirs(self.in_dir + "/" + new_dir_name)
-            if not os.path.exists(self.out_dir + "/" + new_dir_name) : os.makedirs(self.out_dir + "/" + new_dir_name)
+            if not os.path.exists(self.in_dir + "/" + new_dir_name):
+                os.makedirs(self.in_dir + "/" + new_dir_name)
+            if not os.path.exists(self.out_dir + "/" + new_dir_name):
+                os.makedirs(self.out_dir + "/" + new_dir_name)
 
             next_in_dir = self.in_dir + "/" + new_dir_name
             next_out_dir = self.out_dir + "/" + new_dir_name
@@ -176,9 +254,23 @@ class SLHA:
         if process.returncode != 0:
             raise RuntimeError("Copy failure")
         
-        return SLHA(direc + "/" + name, self.softpoint, in_dir=next_in_dir, out_dir=next_out_dir)
+        return SLHA(direc + "/" + name,
+                    self.softpoint, 
+                    in_dir=next_in_dir, 
+                    out_dir=next_out_dir)
     
-    def get_data(self, param: str, line: str) -> tt.List[str]:
+    def get_data(self, param: str, line: str) -> list[str]:
+        """
+        Grabs data row from specified block/decay at a line given.
+
+        Parameters:
+        param (str): The intended parameter whose data to extract.
+        line (str): Line number within a block/decay to extract data from.
+
+        Returns:
+        list[str]: Data at specified location. Note that the data has not been cast yet.
+        """
+
         if param in self.block_list.keys():
             block = self.block_list[param]
             for row in block:
@@ -194,11 +286,28 @@ class SLHA:
 
         return value
     
-
     #maybe change to kwargs in the future if other options are necessary
-    def gen_resum(self, particle1: str, particle2: str, collider_type: str="proton-proton", com: int=13000):
+    def gen_resum(self, 
+                  particle1: str, 
+                  particle2: str, 
+                  collider_type: str = "proton-proton", 
+                  com: int = 13000) -> str:
+        """
+        Generates an input file for the Resummino program based on specified inputs.
+        Resummino can only handle electroweak SUSY productions and this function is limited
+        to two-body cross sections.
 
-        if not self.check_particle(particle1) or not self.check_particle(particle2):
+        Parameters:
+        particle1 (str): PDG identifier for particle 1 in a SUSY two-body production.
+        particle2 (str): PDG identifier for particle 2 in a SUSY two-body production.
+        collider_type (str, optional): Type of collider considered. Either proton-proton or proton-antiproton. Default is proton-proton.
+        com (int, optional): Center of mass energy of the collider in GeV. Default is 13 TeV.
+
+        Returns:
+        str: File path for the generated Resummino input.
+        """
+
+        if not self._check_particle(particle1) or not self._check_particle(particle2):
             raise ValueError("One or both particles provided are not allowed or do not exist.")
         
         resum_name = self.slha.split(".txt")[0] + "_RESUM.txt"
@@ -230,8 +339,9 @@ class SLHA:
 
         return resum_name
     
-    
-    def check_particle(self, particle):
+    def _check_particle(self, particle):
+        # Function to check whether the particle is acceptable for Resummino
+
         valid_resum_particles = ["11", "12", "13", "14", "15", "16",
                                  "1000011", "1000013", "1000015", "1000012", "1000014", "1000016",
                                  "2000011", "2000013", "2000015",
@@ -242,8 +352,24 @@ class SLHA:
         
         return True if str(np.abs(int(particle))) in valid_resum_particles else False
 
-    
-    def cross_section(self, particle1: str, particle2: str, order: str="lo", suppress=True):
+    def cross_section(self, 
+                      particle1: str, 
+                      particle2: str, 
+                      order: str = "lo", 
+                      suppress: bool = True) -> tuple[float, float]:
+        """
+        Computes cross section in pb to specified order in perturbation theory
+        for two specified particles using Resummino.
+
+        Parameters:
+        particle1 (str): PDG identifier for particle 1 in a SUSY two-body production.
+        particle2 (str): PDG identifier for particle 2 in a SUSY two-body production.
+        order (str, optional): Order in perturbation theory to compute to. Can be lo, nlo, nlo+nll. Default is lo.
+        suppress (bool, optional): Option to suppress the subprocess stdout and stderr. Default is True.
+
+        Returns:
+        tuple[float, float]: Tuple of (cross-section, uncertainty) in units of pb.
+        """
 
         self.resum = self.gen_resum(particle1, particle2)
 
@@ -305,36 +431,75 @@ class SLHA:
                 return (self.nlo_nll_sigma, self.nlo_nll_uncty)
                 
 
+def scan_params(base_slha: SLHA, 
+                params: list[str], 
+                param_values: list[str], 
+                purge: bool = False) -> list[SLHA]:
+    """
+    Given an input SLHA, generates output SLHAs for a range of parameters
+    and a range of values for each parameter.
 
+    Parameters:
+    base_slha (SLHA): The initial SLHA object to reference for all outputs.
+    params (list[str]): List of parameter names to scan over.
+    param_values (list[str]): 2D list of values. There should be a list of values for each parameter in params.
+    purge (bool, optional): Option to delete the generated folders of files after running. Default is False.
 
+    Returns:
+    list[SLHA]: List of generated SLHA objects from each parameter in params with each value in param_values. 
+    """
 
-
-def scan_params(base_slha: SLHA, params: tt.List[str], param_values: tt.List[str], purge: bool=False):
     orig_name = base_slha.slha_name
     scans = []
 
     dtime = dt.datetime.now()
-    date_string = dtime.date().isoformat() + "_" + str(dtime.time().hour) + "-" + str(dtime.time().minute) + "-" + f"{dtime.time().second:.0f}"
+    date_string = (dtime.date().isoformat() 
+        + "_" + str(dtime.time().hour) 
+        + "-" + str(dtime.time().minute) 
+        + "-" + f"{dtime.time().second:.0f}")
 
     for i in range(len(params)):
         if params[i][0] not in base_slha.block_list and params[i][0] not in base_slha.decay_list:
             raise RuntimeError(f"Cannot set {params[i]}, parameter does not exist.")
         
         for value in param_values[i]:
-            new_name = params[i][0] + "_" + str(params[i][1]) + "_" + str(int(float(value))) + "_" + orig_name
-            new_slha = base_slha.create_copy(new_name, new_dir_name=date_string)
+            new_name = params[i][0] 
+            + "_" + str(params[i][1]) 
+            + "_" + str(int(float(value))) 
+            + "_" + orig_name
+            new_slha = base_slha.create_copy(new_name, 
+                                             new_dir_name=date_string)
 
             new_slha.set_param(params[i], value)
             new_out_slha = new_slha.gen_output()
             scans.append(new_out_slha)
 
+    # purge should be changed to a separate function
     if purge:
         shutil.rmtree(new_slha.in_dir)
         shutil.rmtree(new_slha.out_dir)
     
     return scans
 
-def gather_data(slha_list: tt.List[SLHA], param: str, line: str, col: int=1) -> tt.List[float]:
+
+def gather_data(slha_list: list[SLHA], 
+                param: str, 
+                line: str, 
+                col: int = 1) -> list[float]:
+    """
+    Gathers data from a specified parameter block/decay and line over
+    a list of SLHA files.
+
+    Parameters:
+    slha_list (list[SLHA]): List of SLHA files to grab data from.
+    param (str): The block/decay header name from which to grab data.
+    line (str): The line number in the given block/decay as a string.
+    col (int, optional): The column to extract data from within the specified line. Default is column 1.
+
+    Returns:
+    list[float]: Returns list of the requested data from each SLHA file.
+    """
+
     data = []
 
     for slha in slha_list:
@@ -346,13 +511,33 @@ def gather_data(slha_list: tt.List[SLHA], param: str, line: str, col: int=1) -> 
     
     return data
 
-def plot_scan(slha_list: tt.List[SLHA], 
+
+def plot_scan(slha_list: list[SLHA], 
               param_x: str, line_x: str, 
-              param_y: str, lines_y: tt.List[str], 
-              col_x: int=1, col_y: int=1,
-              abs_val: bool=False, 
-              fig=None, ax=None,
-              label_list: tt.List[str]=None):
+              param_y: str, lines_y: list[str], 
+              col_x: int = 1, col_y: int = 1,
+              abs_val: bool = False, 
+              fig: plt.Figure | None = None, ax: plt.Axes | None = None,
+              label_list: list[str] = None) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Create a plot with data collected from a list of SLHAs for a specified parameter
+
+    Parameters:
+    slha_list (list[SLHA]): List of SLHA files to gather data from.
+    param_x (str): Block/Decay header to use as the horizontal axis.
+    line_x (str): Line number within specified header for the horizontal variable.
+    param_y (str): Block/Decay header to use as the vertical axis.
+    lines_y (list[str]): Line number within specified header for the vertical variable.
+    col_x (int, optional): Column of desired data within line for horizontal variable. Default is column 1.
+    col_y (int, optional): Column of desired data within line for vertical variable. Default is column 1.
+    abs_val (bool, optional): Boolean for whether the absolute value of the data set should be taken. Default is False.
+    fig (Figure | None, optional): Optional parameter to supply a matplotlib Figure object. Default is None.
+    ax (Axes | None, optional): Optional parameter to supply a matplotlib Axes object. Default is None.
+    label_list (list[str]): Optional parameter to supply a list of labels for a legend. Default is None.
+
+    Returns:
+    tuple[Figure, Axes]: Returns the matplotlib Figure and Axes objects that have been plotted on.
+    """
     
     if fig is None and ax is None:
         fig, ax = plt.subplots()
@@ -377,3 +562,4 @@ def plot_scan(slha_list: tt.List[SLHA],
             
             ax.plot(data_x, data_y)
 
+    return (fig, ax)
