@@ -4,6 +4,7 @@ import typing as tt
 import shutil
 import datetime as dt
 import matplotlib.pyplot as plt
+import matplotlib.colors as cplt
 import numpy as np
 
 
@@ -431,6 +432,16 @@ class SLHA:
                 return (self.nlo_nll_sigma, self.nlo_nll_uncty)
                 
 
+# Plotting palette definition
+
+color_palette = ["#648FFF", "#785EF0", "#DC267F",
+                "#FE6100", "#FFB000"]
+                
+cmap_linear = cplt.LinearSegmentedColormap.from_list(
+    name="colorblind-ibm", colors=color_palette
+)
+
+
 def scan_params(base_slha: SLHA, 
                 params: list[str], 
                 param_values: list[str], 
@@ -541,6 +552,8 @@ def plot_scan(slha_list: list[SLHA],
     
     if fig is None and ax is None:
         fig, ax = plt.subplots()
+
+    ax.set_prop_cycle('color', color_palette)
 
     data_x = np.array(gather_data(slha_list, param_x, line_x, col=col_x))
     if abs_val:
