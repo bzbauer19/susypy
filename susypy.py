@@ -95,9 +95,7 @@ class SLHA:
         # Reads the SLHA file and compiles the blocks and decays into two dictionaries for data reference.
 
         do_block = False
-        do_decay = False
         block_list = []
-        decay_list = []
         temp = []
 
         with open(self.slha) as slha_file:
@@ -105,47 +103,33 @@ class SLHA:
                 if line[0] == "#":
                     continue
 
-                if "block" in line.lower():
+                if "block" in line.lower() or "decay" in line.lower():
                     if do_block:
                         block_list.append(temp)
-                    
-                    if do_decay:
-                        decay_list.append(temp)
 
-                    do_decay = False
                     do_block = True
                     
-                    temp = []
-
-                elif "decay" in line.lower():
-                    if do_block:
-                        block_list.append(temp)
-                    
-                    if do_decay:
-                        decay_list.append(temp)
-
-                    do_block = False
-                    do_decay = True
-
                     temp = []
 
                 temp.append(line.split())
         
         self.block_list = self._clean_data(block_list)
-        self.decay_list = self._clean_data(decay_list)
 
     def _clean_data(self, dirty: list) -> dict:
         # Takes in a 2D list of data from _parse and removes unncessary information and assembles a dictionary with headers as keys.
 
         temp_cell = []
-        clean = {}
+        clean = []
+        is_decay = False
         for cell in dirty:
             temp_cell = []
             dict_key = ''
             for row in cell:
                 rlow = [s.lower() for s in row]
                 if "block" in rlow or "decay" in rlow:
-                    dict_key = row[1]
+                    if "decay" in rlow:
+                        is_decay = True
+                    key = row[1]
                     continue
                 try:
                     comment_start = row.index('#')
@@ -155,29 +139,9 @@ class SLHA:
                 except:
                     temp_row = row
                 temp_cell.append(temp_row)
-            clean[dict_key] = temp_cell
+                blck = Block(key, temp_cell, is_decay=is_decay)
+            clean.append(blck)
         return clean
-
-    def to_floats(self, cell: list[str]) -> list[float]:
-        """
-        Converts a set of Block values or Decay values to floats from strings.
-        This function assumes that the input list is 1D and only contains numbers and comments.
-
-        Parameters:
-        cell (list[str]): 1D list of strings to be converted to floats, comments are allowed.
-
-        Returns:
-        list[float]: 2D list of floats from cell strings, comments are removed.
-        """
-
-        floats = []
-        for row in cell:
-            print(row[-1] + " " + " ".join(row[:-1])) # Displays comment and associated data
-            cast_row = [float(i) for i in row[:-1]]
-
-            floats.append(cast_row)
-
-        return floats
 
     def set_param(self, param: tuple[str, int], value: str, loc: int = 1):
         """
@@ -260,6 +224,13 @@ class SLHA:
                     in_dir=next_in_dir, 
                     out_dir=next_out_dir)
     
+    def grab_block(self, param):
+        for block in self.block_list:
+            if block == param:
+                return block
+            
+        raise ValueError(f"{param} does not exist.")
+    
     def get_data(self, param: str, line: str) -> list[str]:
         """
         Grabs data row from specified block/decay at a line given.
@@ -271,19 +242,15 @@ class SLHA:
         Returns:
         list[str]: Data at specified location. Note that the data has not been cast yet.
         """
-
-        if param in self.block_list.keys():
-            block = self.block_list[param]
-            for row in block:
-                if line in row:
-                    value = row
-        elif param in self.decay_list.keys():
-            decay = self.block_list[param]
-            for row in decay:
-                if line in row:
-                    value = row
+        value = None
+        if param in self.block_list:
+            block = self.grab_block(param)
+            value = block.data[line]
         else:
             raise ValueError(f"{param} is not a valid parameter.")
+        
+        if value is None:
+            raise ValueError(f"Value is none for {param}, {line}")
 
         return value
     
@@ -432,18 +399,73 @@ class SLHA:
                 return (self.nlo_nll_sigma, self.nlo_nll_uncty)
                 
 
+class Block:
+    def __init__(self, label, block_data, is_decay=False):
+        self.label = label
+        self.is_decay = is_decay
+        self.data = self._wrangle_data(block_data)
+        
+
+    def _wrangle_data(self, data):
+        cell = {"label":self.label}
+
+        for row in data:
+            if self.is_decay:
+                cell[row[-1]] = row[0]
+            else:
+                if len(row) == 3:
+                    cell[row[0]] = row[-2]
+                elif len(row) > 3:
+                    key = " ".join(row[:-2])
+                    cell[key] = row[-2]
+
+        return cell
+
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.label == other
+        
+    def __iter__(self):
+        return LineIterator(self)
+    
+    def __str__(self):
+        return self.label
+    
+
+class LineIterator:
+    def __init__(self, container):
+        self.container = container
+        self.keys = list(self.container.data.keys())
+        self.vals = list(self.container.data.values())
+        self.nmax = len(self.vals)
+        self.n = 0
+
+    def __next__(self):
+        self.n += 1
+        if self.n >= self.nmax:
+            raise StopIteration
+        return (self.keys[self.n], self.vals[self.n])
+
+    def __iter__(self):
+        return self
+
+        
+
+
 # Plotting palette definition
 
-color_palette = ["#648FFF", "#785EF0", "#DC267F",
-                "#FE6100", "#FFB000"]
+# color_palette = ["#648FFF", "#785EF0", "#DC267F",
+#                 "#FE6100", "#FFB000"]
                 
-cmap_linear = cplt.LinearSegmentedColormap.from_list(
-    name="colorblind-ibm", colors=color_palette
-)
+# cmap_linear = cplt.LinearSegmentedColormap.from_list(
+#     name="colorblind-ibm", colors=color_palette
+# )
 
+plt.rcParams["axes.prop_cycle"] = plt.cycler("color", plt.cm.Dark2.colors)
 
 def scan_params(base_slha: SLHA, 
-                params: list[str], 
+                param: str, 
                 param_values: list[str], 
                 purge: bool = False) -> list[SLHA]:
     """
@@ -452,12 +474,12 @@ def scan_params(base_slha: SLHA,
 
     Parameters:
     base_slha (SLHA): The initial SLHA object to reference for all outputs.
-    params (list[str]): List of parameter names to scan over.
-    param_values (list[str]): 2D list of values. There should be a list of values for each parameter in params.
+    params (list[str]): Parameter name to scan over.
+    param_values (list[str]): 1D list of values for param.
     purge (bool, optional): Option to delete the generated folders of files after running. Default is False.
 
     Returns:
-    list[SLHA]: List of generated SLHA objects from each parameter in params with each value in param_values. 
+    list[SLHA]: List of generated SLHA objects with each value in param_values being assigned to param. 
     """
 
     orig_name = base_slha.slha_name
@@ -469,26 +491,21 @@ def scan_params(base_slha: SLHA,
         + "-" + str(dtime.time().minute) 
         + "-" + f"{dtime.time().second:.0f}")
 
-    for i in range(len(params)):
-        if params[i][0] not in base_slha.block_list and params[i][0] not in base_slha.decay_list:
-            raise RuntimeError(f"Cannot set {params[i]}, parameter does not exist.")
-        
-        for value in param_values[i]:
-            new_name = (params[i][0] 
-                + "_" + str(params[i][1]) 
-                + "_" + str(int(float(value))) 
-                + "_" + orig_name)
-            new_slha = base_slha.create_copy(new_name, 
-                                             new_dir_name=date_string)
 
-            new_slha.set_param(params[i], value)
-            new_out_slha = new_slha.gen_output()
-            scans.append(new_out_slha)
+    if param[0] not in base_slha.block_list:
+        raise RuntimeError(f"Cannot set {param}, parameter does not exist.")
+    
+    for value in param_values:
+        new_name = (param[0] 
+            + "_" + str(param[1]) 
+            + "_" + str(int(float(value))) 
+            + "_" + orig_name)
+        new_slha = base_slha.create_copy(new_name, 
+                                            new_dir_name=date_string)
 
-    # purge should be changed to a separate function
-    if purge:
-        shutil.rmtree(new_slha.in_dir)
-        shutil.rmtree(new_slha.out_dir)
+        new_slha.set_param(param, value)
+        new_out_slha = new_slha.gen_output()
+        scans.append(new_out_slha)
     
     return scans
 
@@ -506,26 +523,39 @@ def gather_data(slha_list: list[SLHA],
     param (str): The block/decay header name from which to grab data.
     line (str): The line number in the given block/decay as a string.
     col (int, optional): The column to extract data from within the specified line. Default is column 1.
+    return_comments (bool, optional): Should it also return comments attached to data. Default is False.
 
     Returns:
-    list[float]: Returns list of the requested data from each SLHA file.
+    list[float] | Tuple[list[float], list[str]]: Returns list of the requested data from each SLHA file. If line is 'all',
+    then data will be 2D. Optionally comments are returned as well.
     """
 
     data = []
+    index_counter = -1
 
     for slha in slha_list:
-        point = slha.get_data(param, line)
-        if col < len(point):
-            data.append(float(point[col]))
+        index_counter += 1
+        if line == 'all':
+            if param in slha.block_list:
+                block = slha.grab_block(param)
+            else:
+                raise IndexError(f"{param} does not exist.")
+            
+            temp = []
+            for row in block:
+                temp.append(row)
+            data.append((temp, index_counter))
+
         else:
-            raise IndexError(f"This section only has {len(point)-1} values.")
+            point = slha.grab_block(param)
+            data.append(float(point.data[line]))
     
     return data
 
 
 def plot_scan(slha_list: list[SLHA], 
               param_x: str, line_x: str, 
-              param_y: str, lines_y: list[str], 
+              param_y: str, lines_y: list[str] | str, 
               col_x: int = 1, col_y: int = 1,
               abs_val: bool = False, 
               fig: plt.Figure | None = None, ax: plt.Axes | None = None,
@@ -538,7 +568,7 @@ def plot_scan(slha_list: list[SLHA],
     param_x (str): Block/Decay header to use as the horizontal axis.
     line_x (str): Line number within specified header for the horizontal variable.
     param_y (str): Block/Decay header to use as the vertical axis.
-    lines_y (list[str]): Line number within specified header for the vertical variable.
+    lines_y (list[str] | str): Line number within specified header for the vertical variable.
     col_x (int, optional): Column of desired data within line for horizontal variable. Default is column 1.
     col_y (int, optional): Column of desired data within line for vertical variable. Default is column 1.
     abs_val (bool, optional): Boolean for whether the absolute value of the data set should be taken. Default is False.
@@ -553,26 +583,48 @@ def plot_scan(slha_list: list[SLHA],
     if fig is None and ax is None:
         fig, ax = plt.subplots()
 
-    ax.set_prop_cycle('color', color_palette)
+    #ax.set_prop_cycle('color', color_palette)
 
     data_x = np.array(gather_data(slha_list, param_x, line_x, col=col_x))
     if abs_val:
         data_x = np.abs(data_x)
 
-    if label_list is not None:
-        for line, label in zip(lines_y, label_list):
-            data_y = np.array(gather_data(slha_list, param_y, line, col=col_y))
-            if abs_val:
-                data_y = np.abs(data_y)
-            
-            ax.plot(data_x, data_y, label=label)
+    if lines_y != 'all':
+        if label_list is not None:
+            for line, label in zip(lines_y, label_list):
+                data_y = np.array(gather_data(slha_list, param_y, line, col=col_y))
+                if abs_val:
+                    data_y = np.abs(data_y)
+                
+                ax.plot(data_x, data_y, label=label)
+
+        else:
+            for line in lines_y:
+                data_y = np.array(gather_data(slha_list, param_y, line, col=col_y))
+                if abs_val:
+                    data_y = np.abs(data_y)
+                
+                ax.plot(data_x, data_y)
 
     else:
-        for line in lines_y:
-            data_y = np.array(gather_data(slha_list, param_y, line, col=col_y))
+        data = gather_data(slha_list, param_y, 'all', col=col_y)
+
+        temp = {}
+        for data_y, index in data:
+            for item in data_y:
+                if item[0] in temp:
+                    temp[item[0]].append((float(item[1]), index))
+                else:
+                    temp[item[0]] = [(float(item[1]), index)]
+        
+        for name, br in zip(temp.keys(), temp.values()):
+            new_ys = np.zeros(len(data_x))
+            for b, i in br:
+                new_ys[i] += b
+
             if abs_val:
-                data_y = np.abs(data_y)
-            
-            ax.plot(data_x, data_y)
+                new_ys = np.abs(new_ys)
+
+            ax.plot(data_x, new_ys, label=name)
 
     return (fig, ax)
