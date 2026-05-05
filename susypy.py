@@ -7,6 +7,23 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as cplt
 import numpy as np
 
+PARTICLE_MAP = {
+    "u": 1, "u": 2, "s": 3, "c": 4, "b": 5, "t": 6,
+    "e-": 11, "nu_e": 12, "mu-": 13, "nu_mu":14, "tau-": 15, "nu_tau": 16,
+    "g": 21, "gamma": 22, "Z": 23, "W+": 24, "h": 25, "H": 35, "A": 36, "H+": 37,
+    "~d_L": 1000001, "~u_L": 1000002, "~s_L": 1000003, "~c_L": 1000004,
+    "~b_1": 1000005, "~t_1": 1000006, "~e_L-":1000011, "nu_eL": 1000011,
+    "~mu_L-": 1000013, "~nu_muL": 1000014, "~tau_1-": 1000015, "~nu_tauL": 1000016,
+    "~g": 1000021, "~chi_10": 1000022, "~chi_20": 1000023, "~chi_1+": 1000024,
+    "~chi_30": 1000025, "~chi_40": 1000035, "~chi_2+": 1000037,
+    "~d_R": 2000001, "~u_R": 2000002, "~s_R": 2000003, "~c_R": 2000004,
+    "~b_2": 2000005, "~t_2": 2000006, "~e_R-": 2000011, "~nu_eR": 2000012,
+    "~mu_R-": 2000013, "~nu_muR": 2000014, "~tau_2-": 2000015, "~nu_tauR": 2000016,
+    "e+": -11, "mu+": -13, "tau+": -15, "W-": -24, "H-": -37, "~e_L+": -1000011,
+    "~mu_L+": -1000013, "~tau_1+": -1000015, "~chi_1-": -1000024, "~chi_2-": -1000037,
+    "~e_R+": -2000011, "~mu_R+": -2000013, "~tau_2+": -2000015
+}
+
 
 class SLHA:
     """
@@ -225,6 +242,10 @@ class SLHA:
                     out_dir=next_out_dir)
     
     def grab_block(self, param):
+        try:
+            param = str(np.abs(int(param)))
+        except:
+            param = param
         for block in self.block_list:
             if block == param:
                 return block
@@ -397,7 +418,128 @@ class SLHA:
             
             case "nlo+nll":
                 return (self.nlo_nll_sigma, self.nlo_nll_uncty)
-                
+            
+    def chain_br(self, decay_block):
+        final_states = []
+        
+        for (label, decay) in decay_block:
+            particles = label.split()[2:]
+            state = Decay(label, float(decay))
+            for particle in particles:
+                if "~" in particle:
+                    if particle == "~chi_10" or particle == "~chi_1+" or particle == "~chi_1-":
+                        state.add_stable(Decay(particle, None))
+                    else:
+                        temp = Decay(particle, None)
+                        inter_states = self.chain_br(self.grab_block(str(PARTICLE_MAP[particle])))
+                        for x in inter_states:
+                            temp.add_child(x)
+
+                        state.add_child(temp)
+                else:
+                    state.add_stable(Decay(particle, None))
+           
+            final_states.append(state)
+
+        return final_states
+    
+    def stable_brs(self, init_state):
+        block = self.grab_block(init_state)
+        final_states = self.chain_br(block)
+        undone = [ self._ravel_states(state) for state in final_states ]
+        
+        states, brs = self._gather_states(undone)
+
+        return dict(zip(states, brs))
+    
+    def conjugate_sum(self, d):
+        in_dict = d
+        pop_keys = []
+        for key in in_dict.keys():
+            temp = []
+            particles = key.split()
+            for particle in particles:
+                if "+" in particle:
+                    temp.append(particle.replace("+", "-"))
+                if "-" in particle:
+                    temp.append(particle.replace("-", "+"))
+            conj_particles = " ".join(temp)
+            if conj_particles in in_dict.keys() and conj_particles not in pop_keys:
+                in_dict[conj_particles] = in_dict[conj_particles] + in_dict[key]
+                pop_keys.append(key)
+        
+        for k in pop_keys:
+            del in_dict[k]
+        
+        return in_dict
+
+    def _ravel_states(self, state):
+        if len(state.children) == 0:
+            return [[state]]
+        return [
+            [state] + path for child in state.children for path in self._ravel_states(child)
+        ]
+
+    def _gather_states(self, mess, states=[], brs=[]):
+        br = 1
+        for item in mess:
+            if isinstance(item, list):
+                states, brs = self._gather_states(item, states=states, brs=brs)
+            else:
+                if not isinstance(any(mess), list):
+                    mask = ["->" in x.name for x in mess]
+                    inits = [b for a, b in zip(mask, mess) if a]
+
+                    temp = []
+                    for i in inits:
+                        br *= i.br
+                        temp.append(" ".join([x.name for x in i.stables]))
+                    
+                    state = " ".join(temp)
+
+                    states.append(state)
+                    brs.append(br)
+                    break
+                else:
+                    raise ValueError("Idk how this could even happen.")
+            
+        return (states, brs)
+    
+    def gen_final_states(self, set1, set2):
+        total_state = {}
+        keys1 = set1.keys()
+        keys2 = set2.keys()
+        for k1 in keys1:
+            for k2 in keys2:
+                total_state[k1 + " " + k2] = set1[k1] * set2[k2]
+            
+        return total_state
+                    
+
+
+class Decay:
+    def __init__(self, name, br, children=None):
+        self.stables = []
+        self.name = name
+        self.br = br
+        if children is not None:
+            self.childen = children
+        else:
+            self.children = []
+
+    def add_child(self, child):
+        self.children.append(child)
+
+    def add_stable(self, partner):
+        self.stables.append(partner)
+
+    def __str__(self):
+        return self.name
+    
+    def __repr__(self):
+        return self.name
+        
+
 
 class Block:
     def __init__(self, label, block_data, is_decay=False):
@@ -407,7 +549,8 @@ class Block:
         
 
     def _wrangle_data(self, data):
-        cell = {"label":self.label}
+        cell = {}
+        # "label":self.label
 
         for row in data:
             if self.is_decay:
@@ -439,7 +582,7 @@ class LineIterator:
         self.keys = list(self.container.data.keys())
         self.vals = list(self.container.data.values())
         self.nmax = len(self.vals)
-        self.n = 0
+        self.n = -1
 
     def __next__(self):
         self.n += 1
@@ -467,7 +610,7 @@ plt.rcParams["axes.prop_cycle"] = plt.cycler("color", plt.cm.Dark2.colors)
 def scan_params(base_slha: SLHA, 
                 param: str, 
                 param_values: list[str], 
-                purge: bool = False) -> list[SLHA]:
+                new_dir: str | None = None) -> list[SLHA]:
     """
     Given an input SLHA, generates output SLHAs for a range of parameters
     and a range of values for each parameter.
@@ -476,7 +619,7 @@ def scan_params(base_slha: SLHA,
     base_slha (SLHA): The initial SLHA object to reference for all outputs.
     params (list[str]): Parameter name to scan over.
     param_values (list[str]): 1D list of values for param.
-    purge (bool, optional): Option to delete the generated folders of files after running. Default is False.
+    new_dir (str | None, optional): Directory path for files to be placed. Default is None.
 
     Returns:
     list[SLHA]: List of generated SLHA objects with each value in param_values being assigned to param. 
@@ -485,11 +628,12 @@ def scan_params(base_slha: SLHA,
     orig_name = base_slha.slha_name
     scans = []
 
-    dtime = dt.datetime.now()
-    date_string = (dtime.date().isoformat() 
-        + "_" + str(dtime.time().hour) 
-        + "-" + str(dtime.time().minute) 
-        + "-" + f"{dtime.time().second:.0f}")
+    if new_dir is None:
+        dtime = dt.datetime.now()
+        new_dir = (dtime.date().isoformat() 
+            + "_" + str(dtime.time().hour) 
+            + "-" + str(dtime.time().minute) 
+            + "-" + f"{dtime.time().second:.0f}")
 
 
     if param[0] not in base_slha.block_list:
@@ -501,7 +645,7 @@ def scan_params(base_slha: SLHA,
             + "_" + str(int(float(value))) 
             + "_" + orig_name)
         new_slha = base_slha.create_copy(new_name, 
-                                            new_dir_name=date_string)
+                                            new_dir_name=new_dir)
 
         new_slha.set_param(param, value)
         new_out_slha = new_slha.gen_output()
@@ -596,7 +740,7 @@ def plot_scan(slha_list: list[SLHA],
                 if abs_val:
                     data_y = np.abs(data_y)
                 
-                ax.plot(data_x, data_y, label=label)
+                ax.plot(data_x, data_y, label=r"${}$".format(label))
 
         else:
             for line in lines_y:
@@ -618,6 +762,15 @@ def plot_scan(slha_list: list[SLHA],
                     temp[item[0]] = [(float(item[1]), index)]
         
         for name, br in zip(temp.keys(), temp.values()):
+
+            pieces = name.split()
+            temp = []
+            for piece in pieces:
+                temp.append(parse_name(piece))
+
+            parsed_name = r" ".join(temp)
+
+
             new_ys = np.zeros(len(data_x))
             for b, i in br:
                 new_ys[i] += b
@@ -625,6 +778,111 @@ def plot_scan(slha_list: list[SLHA],
             if abs_val:
                 new_ys = np.abs(new_ys)
 
-            ax.plot(data_x, new_ys, label=name)
+            ax.plot(data_x, new_ys, label=r"${}$".format(parsed_name))
 
     return (fig, ax)
+
+
+def parse_name(raw):
+    has_tilde = False
+    has_bar = False
+    carrots = []
+    if "~" in raw:
+        raw = raw.replace("~", "")
+        has_tilde = True
+    if "bar" in raw:
+        rwa = raw.replace("bar", "")
+        has_bar = True
+    if "'" in raw:
+        raw = raw.replace("'", "")
+        carrots.append("'")
+    if "+" in raw:
+        raw = raw.replace("+", "")
+        carrots.append("+")
+    if "-" in raw and ">" not in raw:
+        raw = raw.replace("-", "")
+        carrots.append("-")
+    if "*" in raw:
+        raw = raw.replace("*", "")
+        carrots.append("*")
+    if raw[-1] == '0':
+        raw = raw.replace("0", "")
+        carrots.append("0")
+
+    broken = raw.split("_")
+    unique_map = {"chi": r"\chi", "nu": r"\nu", "mu": r"\mu", "tau": r"\tau", "pi": r"\pi", "gamma": r"\gamma"}
+    if broken[0] in unique_map:
+        particle = unique_map[broken[0]]
+    elif broken[0] == "gluon":
+        particle = "g"
+    else:
+        particle = broken[0]
+    
+    if len(broken) > 1:
+        if broken[1][-1] == "L" or broken[1][-1] == "R":
+            if broken[1][:-1] in unique_map:
+                under = unique_map[broken[1][:-1]]
+            else:
+                under = broken[1][:-1]
+            under = r"{0}_{1}".format(under, broken[1][-1])
+        else:
+            if broken[1] in unique_map:
+                under = unique_map[broken[1]]
+            else:
+                under = broken[1]
+    else:
+        under = []
+
+    if has_tilde:
+        particle = "{" + particle + "}"
+        particle = r"\tilde{}".format(particle)
+    if has_bar:
+        particle = "{" + particle + "}"
+        particle = r"\bar{}".format(particle)
+    
+    up = "".join(carrots)
+    if len(up) > 0:
+        particle = r"{0}^{1}".format(particle, up)
+    
+    if len(under) > 0:
+        particle = r"{0}_{1}".format(particle, under)
+        
+    return particle
+
+
+def sort_keys(d):
+    copy = d
+    ks = []
+    old_ks = []
+    for key in d.keys():
+        sorted_key = "".join(sorted(key))
+        ks.append(sorted_key)
+        old_ks.append(key)
+        
+    for k, old_k in zip(ks, old_ks):
+        copy[k] = copy.pop(old_k)
+    
+    return copy
+
+
+def combine_brs(dict_set):
+    sorted_ds = []
+    brs = {}
+
+    for d in dict_set:
+        sorted_ds.append(sort_keys(d))
+
+    visited = []
+    for i in range(len(sorted_ds)):
+        for state in dict_set[i].keys():
+            total_br = dict_set[i][state]
+            if state not in visited:
+                visited.append(state)
+                for j in range(len(sorted_ds)):
+                    if i != j:
+                        if state in sorted_ds[j].keys():
+                            br = sorted_ds[j][state]
+                            total_br += br
+                brs[state] = total_br
+    
+    return brs
