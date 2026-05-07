@@ -419,19 +419,27 @@ class SLHA:
             case "nlo+nll":
                 return (self.nlo_nll_sigma, self.nlo_nll_uncty)
             
-    def chain_br(self, decay_block):
+    def chain_br(self, decay_block, search=None):
         final_states = []
         
         for (label, decay) in decay_block:
+            is_found = False
             particles = label.split()[2:]
             state = Decay(label, float(decay))
+            if search is not None:
+                if search in particles:
+                    is_found = True
             for particle in particles:
                 if "~" in particle:
                     if particle == "~chi_10" or particle == "~chi_1+" or particle == "~chi_1-":
                         state.add_stable(Decay(particle, None))
                     else:
                         temp = Decay(particle, None)
-                        inter_states = self.chain_br(self.grab_block(str(PARTICLE_MAP[particle])))
+                        if not is_found:
+                            inter_states = self.chain_br(self.grab_block(str(PARTICLE_MAP[particle])), search=search)
+                        else:
+                            inter_states = self.chain_br(self.grab_block(str(PARTICLE_MAP[particle])), search=None)
+                        
                         for x in inter_states:
                             temp.add_child(x)
 
@@ -439,39 +447,24 @@ class SLHA:
                 else:
                     state.add_stable(Decay(particle, None))
            
-            final_states.append(state)
+            if search is None or is_found:
+                final_states.append(state)
 
         return final_states
     
-    def stable_brs(self, init_state):
+    def stable_brs(self, init_state, search=None, conj=False):
         block = self.grab_block(init_state)
-        final_states = self.chain_br(block)
+        final_states = self.chain_br(block, search=search)
         undone = [ self._ravel_states(state) for state in final_states ]
         
         states, brs = self._gather_states(undone)
 
-        return dict(zip(states, brs))
-    
-    def conjugate_sum(self, d):
-        in_dict = d
-        pop_keys = []
-        for key in in_dict.keys():
-            temp = []
-            particles = key.split()
-            for particle in particles:
-                if "+" in particle:
-                    temp.append(particle.replace("+", "-"))
-                if "-" in particle:
-                    temp.append(particle.replace("-", "+"))
-            conj_particles = " ".join(temp)
-            if conj_particles in in_dict.keys() and conj_particles not in pop_keys:
-                in_dict[conj_particles] = in_dict[conj_particles] + in_dict[key]
-                pop_keys.append(key)
-        
-        for k in pop_keys:
-            del in_dict[k]
-        
-        return in_dict
+        state_dict = dict(zip(states, brs))
+
+        if conj:
+            state_dict = conjugate_states(state_dict)
+
+        return state_dict
 
     def _ravel_states(self, state):
         if len(state.children) == 0:
@@ -480,7 +473,13 @@ class SLHA:
             [state] + path for child in state.children for path in self._ravel_states(child)
         ]
 
-    def _gather_states(self, mess, states=[], brs=[]):
+    def _gather_states(self, mess, states=None, brs=None):
+        if states is None:
+            states = []
+        
+        if brs is None:
+            brs = []
+
         br = 1
         for item in mess:
             if isinstance(item, list):
@@ -503,18 +502,7 @@ class SLHA:
                 else:
                     raise ValueError("Idk how this could even happen.")
             
-        return (states, brs)
-    
-    def gen_final_states(self, set1, set2):
-        total_state = {}
-        keys1 = set1.keys()
-        keys2 = set2.keys()
-        for k1 in keys1:
-            for k2 in keys2:
-                total_state[k1 + " " + k2] = set1[k1] * set2[k2]
-            
-        return total_state
-                    
+        return (states, brs)                
 
 
 class Decay:
@@ -855,7 +843,7 @@ def sort_keys(d):
     ks = []
     old_ks = []
     for key in d.keys():
-        sorted_key = "".join(sorted(key))
+        sorted_key = " ".join(sorted(key.split()))
         ks.append(sorted_key)
         old_ks.append(key)
         
@@ -874,7 +862,7 @@ def combine_brs(dict_set):
 
     visited = []
     for i in range(len(sorted_ds)):
-        for state in dict_set[i].keys():
+        for state in sorted_ds[i].keys():
             total_br = dict_set[i][state]
             if state not in visited:
                 visited.append(state)
@@ -886,3 +874,64 @@ def combine_brs(dict_set):
                 brs[state] = total_br
     
     return brs
+
+
+def resum_similar(d):
+    sorted_ds = sort_keys(d)
+    temp = {}
+    
+    for i in range(len(sorted_ds.keys())):
+        key_i = list(sorted_ds.keys())[i]
+        temp_br = sorted_ds[key_i]
+        for j in range(i, len(sorted_ds.keys())):
+            if i != j:
+                key_j = list(sorted_ds.keys())[j]
+
+                if key_i == key_j:
+                    temp_br += sorted_ds[key_j]
+                
+        temp[key_i] = temp_br
+    
+    return temp
+
+def combine_final_states(set1, set2):
+    total_state = {}
+    keys1 = set1.keys()
+    keys2 = set2.keys()
+    for k1 in keys1:
+        for k2 in keys2:
+            total_state[k1 + " " + k2] = set1[k1] * set2[k2]
+        
+    return total_state
+
+def eff_sigma(state_set, sigma):
+    temp = {}
+
+    for key, val in state_set.items():
+        temp[key] = sigma*val
+    
+    return temp
+
+def conjugate_states(in_dict):
+    out_dict = {}
+    for key in in_dict.keys():
+        temp = []
+        particles = key.split()
+        for particle in particles:
+            if "+" in particle:
+                particle = particle.replace("+", "-")
+            elif "-" in particle:
+                particle = particle.replace("-", "+")
+            
+            temp.append(particle)
+        conj_particles = " ".join(temp)
+        out_dict[conj_particles] = in_dict[key]
+    
+    return out_dict
+
+def event_count(sigma_dict, luminosity=300):
+    events = {}
+    for key, val in sigma_dict.items():
+        events[key] = val*luminosity*1000
+
+    return events
